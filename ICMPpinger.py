@@ -97,8 +97,9 @@ def sendOnePing(mySocket, destAddr, ID):
         myChecksum = htons(myChecksum)
 
     header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, ID, 1) 
-    packet = header + data
+    packet = header + data # Bytes concatenation
 
+    #  port 1 is arbitrary/ignored, this is a connectionless protocol
     mySocket.sendto(packet, (destAddr, 1)) # AF_INET address must be tuple, not str 
     # Both LISTS and TUPLES consist of a number of objects
     # which can be referenced by their position number within the object.
