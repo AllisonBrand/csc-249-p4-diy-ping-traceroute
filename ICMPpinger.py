@@ -9,8 +9,11 @@ import time
 import select 
 import binascii
 
-
+# IP protocol carried:
+ICMP_PROTOCOL = 1
+# ICMP message type
 ICMP_ECHO_REQUEST = 8
+ICMP_ECHO_REPLY = 0
 
 # -------------------------------------
 # This method takes care of calculating
@@ -46,44 +49,94 @@ def checksum(string):
 
 
 def receiveOnePing(mySocket, ID, timeout, destAddr): 
-    
+    # timeout is for overall ping receive, so we have to
+    # time how long we are in select calls. Socket may receive multiple 
+    # packets, only one will be the ping of interest. 
     timeLeft = timeout
     
-    while True:
+    while True:      
         startedSelect = time.time()
-
-        whatReady = select.select([mySocket], [], [], timeLeft) 
+        # file descriptors to wait for  vv   vv    vv  availibility
+        #                           read,  write, exception
+        whatReady = select.select([mySocket], [], [], timeLeft)
+        #    [] is passed because we aren't interested in files with write or exception events.
         howLongInSelect = (time.time() - startedSelect)
-        if whatReady[0] == []: # Timeout 
+        timeLeft -= howLongInSelect
+        if timeLeft <= 0: # Took too long in select.
             return "Request timed out."
-
-        timeReceived = time.time()
-        recPacket, addr = mySocket.recvfrom(1024)
-
-        #---------------#
-        # Fill in start #
-        #---------------#
-
-            # TODO: Fetch the ICMP header from the IP packet
-            # Soluton can be implemented in 6 lines of Python code.
-
-        #-------------#
-        # Fill in end #
-        #-------------#
-
-        timeLeft = timeLeft - howLongInSelect 
+        if whatReady[0] == []: # select timed out and we never received it.
+            return "Request timed out."
         
-        if timeLeft <= 0:
-            return "Request timed out."
+        recPacket, addr = mySocket.recvfrom(1024)
+        timeReceived = time.time()
+
+    #---------------#
+    # Fill in start #
+    #---------------#
+        # The AF_INET address family is only compatiple with IPv4, so I'm not bothering to check that the received packet is IPv4 and not IPv6.
+
+        # To separate the IP header from the ICMP packet, we need the IP header length:
+        # The first byte contains the IP version and the header length, both occupying 4 bits. Slice indexing with [0:1] pulls out the first byte without
+        # python converting it to a base 10 integer. hex() converts it to a hex string where the first hex character represents the first four 
+        # bits and the second character represents the second 4 bits. [1] pulls out the second character. Then it's converted to an int, and 
+        # multiplied by 4 because the IP header length field specifies length in 4 bit increments.
+        ipHeaderLen = int(recPacket[0:1].hex()[1], base=16)*4 
+        
+        # Verification:
+        # It should have come from the address we sent the ping to:
+        if addr[0] != destAddr:
+            continue
+        protocol = recPacket[9] # The 10th byte in the IP header identifies the protocol of the data it carries.
+        if protocol != ICMP_PROTOCOL: # If it's not ICMP, the packet received is not what we are looking for
+            continue
+        icmpPacket = recPacket[ipHeaderLen:]
+        if len(icmpPacket) != 16: # We expect to unpack a 16 byte echo reply:
+            continue
+        type, code, check_sum, id, seq, timeSent = struct.unpack('BBHHHd', icmpPacket)
+        if type != ICMP_ECHO_REPLY or id != ID: # ID is used to match the echo reply to the echo request.
+            continue
+
+        # At this point, we have verified that it is an IMCP Echo Reply with the ID of the ping we sent out
+        delay = timeReceived - timeSent
+        ttl  = recPacket[8] # 9th byte in the IP header is the Time To Live
+        return delay, ttl
+        #     # TODO: Fetch the ICMP header from the IP packet
+        #     # Soluton can be implemented in 6 lines of Python code.
+
+    #---------------#
+    # Fill in end #
+    #---------------#
+        
+# C:\Users\allis\GitHub\csc-249-p4-diy-ping-traceroute> py ICMPpinger.py "www.cnbc.com"
+# Pinging www.cnbc.com [23.35.66.135] 3 times using Python:
+# got here
+# b"E`\x00$\xe8y\x00\x008\x01D\xb7\x17#B\x87\x83\xe5w\xb9\x00\x00\x87\xca\xc4'\x01\x00\xf9\xd3\x96\x9aI]\xd9A"
+# Ping 1 RTT Request timed out. sec
+# got here
+# b"E`\x00$\xeb]\x00\x008\x01A\xd3\x17#B\x87\x83\xe5w\xb9\x00\x00&\xa7\xc4'\x01\x00\xda\xf6\x16\x9bI]\xd9A"
+# Ping 2 RTT Request timed out. sec
+# got here
+# b"E`\x00$\xf0\xad\x00\x008\x01<\x83\x17#B\x87\x83\xe5w\xb9\x00\x00G\xa8\xc4'\x01\x008\xf5\x97\x9bI]\xd9A"
+
+# >>> struct.unpack('bbHbbbbbbbb', packet[8:20])
 
 def sendOnePing(mySocket, destAddr, ID):
-    # Header is type (8), code (8), checksum (16), id (16), sequence (16)
+    '''Sends an ICMP echo request to destAddr. The echo data is a timestamp, 
+    so the sender can determine how long it took for the pong to come back. '''
+    # This method creates an ICMP Echo request header and stores the current 
+    # timestamp as the payload. It then calculates a checksum for the ICMP packet,
+    # replaces the header's dummy 0 checksum, and sends the packet. 
+
+    # Header is 8 bytes: 
+    #    type (1), code (1), checksum (2), id (2), sequence (2)
+    # code is 0, id helps match echos and replies. Sequence is unused, set to 1.
     myChecksum = 0
 
     # Make a dummy header with a 0 checksum
- 
     # struct -- Interpret strings as packed binary data
+    # b - 1 byte integer, H - 2 byte unsigned integer, h - 2 byte signed integer
     header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, ID, 1) 
+    # d - double, 8 bytes
     data = struct.pack("d", time.time())
 
     # Calculate the checksum on the data and the dummy header. 
@@ -99,10 +152,9 @@ def sendOnePing(mySocket, destAddr, ID):
     header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, ID, 1) 
     packet = header + data # Bytes concatenation
 
+    # AF_INET address includes IP address and port number
     #  port 1 is arbitrary/ignored, this is a connectionless protocol
-    mySocket.sendto(packet, (destAddr, 1)) # AF_INET address must be tuple, not str 
-    # Both LISTS and TUPLES consist of a number of objects
-    # which can be referenced by their position number within the object.
+    mySocket.sendto(packet, (destAddr, 1)) 
 
 def doOnePing(destAddr, timeout): 
     icmp = getprotobyname("icmp")
@@ -110,26 +162,26 @@ def doOnePing(destAddr, timeout):
     # SOCK_RAW is a powerful socket type. For more details:	http://sock-raw.org/papers/sock_raw
     mySocket = socket(AF_INET, SOCK_RAW, icmp)
 
-    myID = os.getpid() & 0xFFFF # Return the current process i 
+    myID = os.getpid() & 0xFFFF # get the current process id, ensure it is no more than 16 bits
     sendOnePing(mySocket, destAddr, myID)
-    delay = receiveOnePing(mySocket, myID, timeout, destAddr)
+    delay, ttl = receiveOnePing(mySocket, myID, timeout, destAddr)
  
     mySocket.close() 
-    return delay
+    return delay, ttl
 
 def ping(host, timeout=1, repeat=3):
 
     # timeout=1 means: If one second goes by without a reply from the server,
     # the client assumes that either the client's ping or the server's pong is lost 
     dest = gethostbyname(host)
-    print(f"Pinging {host} [{dest}] {repeat} times using Python:")
+    print(f"\nPinging {host} [{dest}] {repeat} times using Python with 8 bytes of data:")
 
     # Send ping requests to a server separated by approximately one second 
     # Do this only a fixed number of times as determined by 'repeat' argument
     numPings = 1
     while (numPings <= repeat) :
-        delay = doOnePing(dest, timeout) 
-        print(f"Ping {numPings} RTT {delay} sec")
+        delay, ttl = doOnePing(dest, timeout) 
+        print(f"Ping {numPings}: RTT {round(delay*1000)} ms, TTL={ttl}")
         time.sleep(1) # one second 
         numPings += 1
     return delay
