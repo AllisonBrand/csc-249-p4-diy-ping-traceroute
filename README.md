@@ -2,7 +2,7 @@
 
 _Attribution: this assignment is based on ICMP Pinger Lab and ICMP Traceroute Lab from Computer Networking: a Top-Down Approach by Jim Kurose and Keith Ross. It was modified for use in CSC249: Networks at Smith College by R. Jordan Crouser in Fall 2022, and further modified by B. Cheikes for use in Fall 2023._
 
-**IMPORTANT: Due to a still-mysterious OS incompatibility, the traceroute code provided in this assignment does not seem to behave correctly when run under native Windows. The code _does_ behave properly when run under MacOS or Linux.**
+**IMPORTANT: Due to a still-mysterious OS incompatibility, the traceroute code provided in this assignment does not seem to behave correctly when run under native Windows. The code _does_ behave properly when run under MacOS or Linux. [Update: this was an issue with the Windows firewall blocking ICMP Time Exceeded Messages. It works properly if you make a loophole for them: Control Panel > System & Security > Windows Defender Firewall > Advanced Settings > Inbound Rules > New Rule > Custom. Select all programs, protocol ICMPv4 Time Exceeded Messages]**
 
 In this assignment, you will gain a better understanding of Internet Control Message Protocol (ICMP) by implementing your own **`ping`** and **`traceroute`** applications using ICMP request and reply messages. After building these tools you will use them to carry out some basic network performance analysis.
 
