@@ -73,6 +73,8 @@ def receiveOnePing(mySocket, ID, timeout, destAddr):
     #---------------#
     # Fill in start #
     #---------------#
+        # Fetch the ICMP header from the IP packet
+        
         # The AF_INET address family is only compatiple with IPv4, so I'm not bothering to check that the received packet is IPv4 and not IPv6.
 
         # To separate the IP header from the ICMP packet, we need the IP header length:
@@ -83,12 +85,11 @@ def receiveOnePing(mySocket, ID, timeout, destAddr):
         ipHeaderLen = int(recPacket[0:1].hex()[1], base=16)*4 
         
         # Verification:
-        # It should have come from the address we sent the ping to:
-        if addr[0] != destAddr:
+        if addr[0] != destAddr: # It should have come from the address we sent the ping to:
             continue
         protocol = recPacket[9] # The 10th byte in the IP header identifies the protocol of the data it carries.
         if protocol != ICMP_PROTOCOL: # If it's not ICMP, the packet received is not what we are looking for
-            continue
+            continue # This condition will never be true, becuase the raw socket we created on;ly accepts ICMP messages.
         icmpPacket = recPacket[ipHeaderLen:]
         if len(icmpPacket) != 16: # We expect to unpack a 16 byte echo reply:
             continue
@@ -100,9 +101,6 @@ def receiveOnePing(mySocket, ID, timeout, destAddr):
         delay = timeReceived - timeSent
         ttl  = recPacket[8] # 9th byte in the IP header is the Time To Live
         return delay, ttl
-        #     # TODO: Fetch the ICMP header from the IP packet
-        #     # Soluton can be implemented in 6 lines of Python code.
-
     #---------------#
     # Fill in end #
     #---------------#
@@ -160,14 +158,14 @@ def doOnePing(destAddr, timeout):
     icmp = getprotobyname("icmp")
 
     # SOCK_RAW is a powerful socket type. For more details:	http://sock-raw.org/papers/sock_raw
-    mySocket = socket(AF_INET, SOCK_RAW, icmp)
+    mySocket = socket(AF_INET, SOCK_RAW, icmp) # Raw socket that only accepts or sends ICMP messages
 
     myID = os.getpid() & 0xFFFF # get the current process id, ensure it is no more than 16 bits
     sendOnePing(mySocket, destAddr, myID)
-    delay, ttl = receiveOnePing(mySocket, myID, timeout, destAddr)
+    results = receiveOnePing(mySocket, myID, timeout, destAddr)
  
     mySocket.close() 
-    return delay, ttl
+    return results
 
 def ping(host, timeout=1, repeat=3):
 
@@ -179,12 +177,22 @@ def ping(host, timeout=1, repeat=3):
     # Send ping requests to a server separated by approximately one second 
     # Do this only a fixed number of times as determined by 'repeat' argument
     numPings = 1
+    rttList = []
     while (numPings <= repeat) :
-        delay, ttl = doOnePing(dest, timeout) 
-        print(f"Ping {numPings}: RTT {round(delay*1000)} ms, TTL={ttl}")
-        time.sleep(1) # one second 
+        print(f"Ping {numPings}:", end=" ")
+        pingResult = doOnePing(dest, timeout)
+        if type(pingResult) == str: # It's a failure description
+            print(pingResult)
+        else: # Sucessful ping:
+            delay, ttl = pingResult
+            print(f"RTT {round(delay*1000, 2)} ms, TTL={ttl}")
+            rttList.append(delay*1000)
+        if numPings < repeat: # Don't do this after the last one.
+            print("waiting one second...", end="", flush=True)
+            time.sleep(1) # one second 
+            print("\r                     \r", end="")
         numPings += 1
-    return delay
+    print(f"Average RTT: {round(sum(rttList) / len(rttList), 3)} ms")
 
 # Runs program
 if __name__ == "__main__":
